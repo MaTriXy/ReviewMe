@@ -1,8 +1,9 @@
 const controller = require('./reviews');
 var google = require('googleapis');
 var playScraper = require('google-play-scraper');
+var androidVersions = require('android-versions')
 
-exports.startReview = function (config) {
+exports.startReview = function (config, first_run) {
     var appInformation = {};
 
     //scrape Google Play for app information first
@@ -13,18 +14,26 @@ exports.startReview = function (config) {
             }
 
             appInformation.appName = appData.title;
-            appInformation.appIcon = 'https:' + appData.icon;
+            appInformation.appIcon = appData.icon;
 
-            exports.fetchGooglePlayReviews(config, appInformation, function (entries) {
-                var reviewLength = entries.length;
+            exports.fetchGooglePlayReviews(config, appInformation, function (reviews) {
+                // If we don't have any published reviews, then treat this as a baseline fetch, we won't post any
+                // reviews to slack, but new ones from now will be posted
+                if (first_run) {
+                    var reviewLength = reviews.length;
 
-                for (var i = 0; i < reviewLength; i++) {
-                    var initialReview = entries[i];
-                    controller.markReviewAsPublished(config, initialReview);
+                    for (var i = 0; i < reviewLength; i++) {
+                        var initialReview = reviews[i];
+                        controller.markReviewAsPublished(config, initialReview);
+                    }
+
+                    if (config.dryRun && reviews.length > 0) {
+                        // Force publish a review if we're doing a dry run
+                        publishReview(appInformation, config, reviews[reviews.length - 1], config.dryRun);
+                    }
                 }
-
-                if (config.dryRun && entries.length > 0) {
-                    publishReview(appInformation, config, entries[entries.length - 1], config.dryRun);
+                else {
+                    exports.handleFetchedGooglePlayReviews(config, appInformation, reviews);
                 }
 
                 var interval_seconds = config.interval ? config.interval : DEFAULT_INTERVAL_SECONDS;
@@ -43,12 +52,12 @@ exports.startReview = function (config) {
 
 
 function publishReview(appInformation, config, review, force) {
-    if (!controller.reviewPublished(review) || force) {
-        if (config.verbose) console.log("INFO: Received new review: " + review);
+    if (!controller.reviewPublished(config, review) || force) {
+        if (config.verbose) console.log("INFO: Received new review: " + JSON.stringify(review));
         var message = slackMessage(review, config, appInformation);
         controller.postToSlack(message, config);
         controller.markReviewAsPublished(config, review);
-    } else if (controller.reviewPublished(config, review)) {
+    } else {
         if (config.verbose) console.log("INFO: Review already published: " + review.text);
     }
 }
@@ -113,7 +122,11 @@ exports.fetchGooglePlayReviews = function (config, appInformation, callback) {
                 out.version = comment.appVersionName;
                 out.versionCode = comment.appVersionCode;
                 out.osVersion = comment.androidOsVersion;
-                out.device = comment.deviceMetadata.productName;
+
+                if (comment.deviceMetadata) {
+                    out.device = comment.deviceMetadata.productName;
+                }
+
                 out.text = comment.text;
                 out.rating = comment.starRating;
                 out.link = 'https://play.google.com/store/apps/details?id=' + config.appId + '&reviewId=' + review.reviewId;
@@ -166,8 +179,6 @@ var slackMessage = function (review, config, appInformation) {
     }
 
     return {
-        "username": config.botUsername,
-        "icon_url": config.botIcon,
         "channel": config.channel,
         "attachments": [
             {
@@ -176,7 +187,7 @@ var slackMessage = function (review, config, appInformation) {
                 "color": color,
                 "author_name": review.author,
 
-                "thumb_url": appInformation.appIcon,
+                "thumb_url": config.showAppIcon ? appInformation.appIcon : config.botIcon,
 
                 "title": title,
 
@@ -188,59 +199,10 @@ var slackMessage = function (review, config, appInformation) {
 };
 
 var getVersionNameForCode = function (versionCode) {
-    if (versionCode == 14) {
-        return "4.0"
+    var version = androidVersions.get(versionCode);
+    if (version != null) {
+        return version.semver;
     }
 
-    if (versionCode == 15) {
-        return "4.0.3"
-    }
-
-    if (versionCode == 16) {
-        return "4.1"
-    }
-
-    if (versionCode == 17) {
-        return "4.2"
-    }
-
-    if (versionCode == 18) {
-        return "4.3"
-    }
-
-    if (versionCode == 19) {
-        return "4.4"
-    }
-
-    if (versionCode == 20) {
-        return "4.4W"
-    }
-
-    if (versionCode == 21) {
-        return "5.0"
-    }
-
-    if (versionCode == 22) {
-        return "5.1"
-    }
-
-    if (versionCode == 22) {
-        return "5.1"
-    }
-
-    if (versionCode == 23) {
-        return "6.0"
-    }
-
-    if (versionCode == 24) {
-        return "7.0"
-    }
-
-    if (versionCode == 25) {
-        return "7.1"
-    }
-
-    if (versionCode == 26) {
-        return "8.0"
-    }
+    return "";
 };
