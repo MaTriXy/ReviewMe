@@ -1,5 +1,6 @@
 const controller = require('./reviews');
-var google = require('googleapis');
+var {google} = require('googleapis');
+
 var playScraper = require('google-play-scraper');
 var androidVersions = require('android-versions')
 
@@ -78,10 +79,14 @@ exports.fetchGooglePlayReviews = function (config, appInformation, callback) {
 
     //read publisher json key
     var publisherJson;
-    try {
-        publisherJson = JSON.parse(require('fs').readFileSync(config.publisherKey, 'utf8'));
-    } catch (e) {
-        console.warn(e)
+    if (typeof config.publisherKey === 'object') {
+        publisherJson = config.publisherKey;
+    } else {
+        try {
+            publisherJson = JSON.parse(require('fs').readFileSync(config.publisherKey, 'utf8'));
+        } catch (e) {
+            console.warn(e)
+        }
     }
 
     var jwt;
@@ -97,7 +102,7 @@ exports.fetchGooglePlayReviews = function (config, appInformation, callback) {
         }
 
         //get list of reviews using Google Play Publishing API
-        google.androidpublisher('v2').reviews.list({
+        google.androidpublisher('v3').reviews.list({
             auth: jwt,
             packageName: config.appId
         }, function (err, resp) {
@@ -107,12 +112,12 @@ exports.fetchGooglePlayReviews = function (config, appInformation, callback) {
 
             if (config.verbose) console.log("INFO: [" + config.appId + "] Received reviews from Google Play");
 
-            if (!resp.reviews) {
+            if (!resp.data.reviews) {
                 callback([]);
                 return;
             }
 
-            var reviews = resp.reviews.map(function (review) {
+            var reviews = resp.data.reviews.map(function (review) {
 
                 var comment = review.comments[0].userComment;
 
